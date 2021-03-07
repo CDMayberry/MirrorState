@@ -1,0 +1,24 @@
+{
+    "name": "MirrorState.Editor",
+    "rootNamespace": "",
+    "references": [
+        "Mirror",
+        "Mirror.Components",
+        "Unity.Mathematics",
+        "Reflyn.Runtime",
+        "MirrorState.Runtime",
+        "Reflyn.Editor",
+        "RailgunNet"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

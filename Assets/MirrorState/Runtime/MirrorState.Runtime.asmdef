@@ -1,0 +1,21 @@
+{
+    "name": "MirrorState.Runtime",
+    "rootNamespace": "",
+    "references": [
+        "Mirror",
+        "Mirror.Components",
+        "Unity.Mathematics",
+        "Reflyn.Runtime",
+        "Fholm",
+        "RailgunNet"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

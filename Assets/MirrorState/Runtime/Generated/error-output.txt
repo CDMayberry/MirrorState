@@ -1,0 +1,237 @@
+using System;
+using Mirror;
+using UnityEngine;
+using Mayberry.Reflyn;
+using MirrorState.Scripts;
+using MirrorState.Scripts.Rollback;
+using CSP.Ticks;
+using CSP.Ticks.Interfaces;
+
+namespace MirrorState.Scripts.Generated.States
+{
+    [DefaultExecutionOrder(10)]
+    public class CubeState : NetworkBehaviour, ITrackedEntity
+    {
+        public delegate void CubeStateEvent(uint tick);
+        [SerializableAttribute]
+        public struct State : ITick
+        {
+            public uint CmdTick;
+            public Vector3 CubePosition;
+            public Quaternion CubeRotation;
+            public Vector3 CubeScale;
+            public uint Tick
+            {
+                get
+                {
+                    return this.CmdTick;
+                }
+            }
+
+            public bool IsNew
+            {
+                get;
+                set;
+            }
+        }
+
+        PriorityQueue<uint, string> _priorityQueue = new PriorityQueue<uint, string>();
+        Rigidbody _rb;
+        [SerializeField]
+        Animator _animator;
+        float _timeElapsed;
+        float _timeToReachTarget = 0.1F;
+        State _from;
+        State _to;
+        [RangeAttribute(1, 100)]
+        public uint TicksPerUpdate = 1;
+        uint _nextTickUpdate;
+        int _stateCount = 0;
+        [SerializeField]
+        State[] _stateBuffer = new State[50];
+        DejitterStructBuffer<State> _stateDejitter = new DejitterStructBuffer<State>(50);
+        [SyncVarAttribute]
+        Vector3 LastPosition = Vector3.zero;
+        [SyncVarAttribute]
+        Quaternion LastRotation = Quaternion.identity;
+        public float RotationSmooth = 15F;
+        State _savedState;
+        void TriggerEvent(uint tick, string evnt)
+        {
+        }
+
+        [ClientRpcAttribute(excludeOwner = true)]
+        void RpcTriggerEvent(uint tick, string evnt)
+        {
+            if (this.hasAuthority || NetworkServer.active)
+            {
+                return;
+            }
+
+            if (tick <= TickSystem.Instance.delayTick)
+            {
+                this.TriggerEvent(tick, evnt);
+            }
+            else
+            {
+                this._priorityQueue.Enqueue(tick, evnt);
+            }
+        }
+
+        void OnEnable()
+        {
+            RollbackSystem.Instance.Register(this);
+        }
+
+        void OnDisable()
+        {
+            RollbackSystem.Instance.Unregister(this);
+        }
+
+        void Awake()
+        {
+            this._rb = this.GetComponent<Rigidbody>();
+        }
+
+        public override void OnStartServer()
+        {
+            this.LastPosition = this.transform.position;
+            this.LastRotation = this.transform.rotation;
+        }
+
+        public override void OnStartClient()
+        {
+            if (this._rb != null && this.hasAuthority == false)
+            {
+                this._rb.isKinematic = true;
+            }
+
+            this.transform.position = this.LastPosition;
+            this.transform.rotation = this.LastRotation;
+        }
+
+        void BufferState(State state)
+        {
+            for (int i = this._stateBuffer.Length - 1; i < this._stateBuffer.Length && i > 0; i = i - 1)
+            {
+                this._stateBuffer[i] = this._stateBuffer[i - 1];
+            }
+
+            this._stateBuffer[0] = state;
+            this._stateCount = Mathf.Min(this._stateCount + 1, this._stateBuffer.Length);
+            this._stateDejitter.Store(state);
+        }
+
+        [ClientRpcAttribute(excludeOwner = true)]
+        void RpcServerState(State state)
+        {
+            if (this.hasAuthority)
+            {
+                return;
+            }
+
+            this.BufferState(state);
+        }
+
+        void FixedUpdate()
+        {
+            if (NetworkServer.active && TickSystem.Instance.Tick >= this._nextTickUpdate)
+            {
+                this._nextTickUpdate = TickSystem.Instance.Tick + this.TicksPerUpdate;
+                State newState = new State();
+                newState.CmdTick = TickSystem.Instance.Tick;
+                newState.CubePosition = this.transform.position;
+                this.LastPosition = newState.CubePosition;
+                newState.CubeRotation = this.transform.rotation;
+                this.LastRotation = newState.CubeRotation;
+                newState.CubeScale = this.transform.lossyScale;
+                this.BufferState(newState);
+                this.RpcServerState(newState);
+            }
+
+            uint usedTick = 0;
+            if (this.hasAuthority)
+            {
+                usedTick = TickSystem.Instance.Tick;
+            }
+            else
+            {
+                usedTick = TickSystem.Instance.delayTick;
+            }
+
+            while (this._priorityQueue.Any() && this._priorityQueue.Peek().Key <= usedTick)
+            {
+                var evnt = this._priorityQueue.Dequeue();
+                this.TriggerEvent(evnt.Key, evnt.Value);
+            }
+        }
+
+        void Update()
+        {
+            if (NetworkServer.active || this.hasAuthority || this._stateCount == 0)
+            {
+                return;
+            }
+
+            if (this._stateBuffer[0].CmdTick > TickSystem.Instance.delayTick)
+            {
+                for (int i = 0; i < this._stateCount; i = i + 1)
+                {
+                    if (this._stateBuffer[i].CmdTick <= TickSystem.Instance.delayTick || i == this._stateCount - 1)
+                    {
+                        this._to = this._stateBuffer[i];
+                        this._from = this._stateBuffer[Mathf.Max(i - 1, 0)];
+                        this._timeElapsed = 0F;
+                        this._timeToReachTarget = (this._to.CmdTick - this._from.CmdTick) * TickSystem.SecPerTick;
+                        break;
+                    }
+                }
+            }
+
+            this._timeElapsed = this._timeElapsed + Time.deltaTime;
+            float lerpAmt = this._timeElapsed / this._timeToReachTarget;
+            this.transform.position = Vector3.Lerp(this._from.CubePosition, this._to.CubePosition, lerpAmt);
+            this.transform.rotation = Quaternion.Slerp(this._from.CubeRotation, this._to.CubeRotation, Time.deltaTime * this.RotationSmooth);
+            this.transform.lossyScale = Vector3.Lerp(this._from.CubeScale, this._to.CubeScale, lerpAmt);
+        }
+
+        void SetToState(State state)
+        {
+            this.transform.position = state.CubePosition;
+            this.transform.rotation = state.CubeRotation;
+            this.transform.lossyScale = state.CubeScale;
+        }
+
+        public void Restore()
+        {
+            this.SetToState(this._savedState);
+        }
+
+        public void Rollback(uint tick)
+        {
+            State state;
+            if (tick > TickSystem.Instance.Tick)
+            {
+                Debug.LogError("Trying to rollback to a future state.");
+                return;
+            }
+
+            if (this._stateDejitter.TryGet(tick, out state) == false)
+            {
+                if (tick < this._stateDejitter.Last.CmdTick)
+                {
+                    state = this._stateDejitter.Last;
+                    Debug.LogWarning("Entity exceeded oldest rollback state, default to last");
+                }
+                else
+                {
+                    state = this._stateDejitter.Last;
+                    Debug.LogError("Unable to find appropriate tick for rollback, using last State.");
+                }
+            }
+
+            this._savedState = this._stateDejitter.Latest;
+            this.SetToState(state);
+        }
+    }
+}
